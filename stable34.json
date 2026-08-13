@@ -95,9 +95,5 @@
   {
     "id": "app_api",
     "repo": "nextcloud/app_api"
-  },
-  {
-    "id": "support",
-    "repo": "nextcloud-gmbh/support"
   }
 ]

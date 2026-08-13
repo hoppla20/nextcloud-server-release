@@ -205,7 +205,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: nextcloud/3rdparty
-          ref: ${{ needs.init.outputs.ref }}
+          ref: ${{ needs.init.outputs.branch }}
 
       - name: Clean
         run: rm -rf .git .github .gitignore README.md
@@ -283,7 +283,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: nextcloud/updater
-          ref: ${{ needs.init.outputs.ref }}
+          ref: ${{ needs.init.outputs.branch }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: updater
@@ -299,7 +299,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: nextcloud/example-files
-          ref: ${{ needs.init.outputs.ref }}
+          ref: ${{ needs.init.outputs.branch }}
       - run: rm -rf .git
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
