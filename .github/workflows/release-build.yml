@@ -10,14 +10,21 @@ on:
       tag:
         required: true
         type: string
+      source_ref:
+        required: false
+        type: string
+        default: stable34
   workflow_dispatch:
     inputs:
       tag:
         description: 'Existing release tag to build and compare (e.g., v34.0.1)'
         required: true
+      source_ref:
+        description: 'Branch or tag in the Pantheon server fork'
+        required: true
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: release-build-${{ inputs.tag || github.ref_name }}
@@ -25,6 +32,7 @@ concurrency:
 
 env:
   COMPOSER_ALLOW_SUPERUSER: '1'
+  SERVER_REPOSITORY: hoppla20/nextcloud-server
 
 jobs:
   init:
@@ -53,11 +61,12 @@ jobs:
         run: |
           TAG="${{ inputs.tag || github.ref_name }}"
           VERSION=$(echo "$TAG" | sed 's/^v//')
-          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          BASE_VERSION=$(echo "$VERSION" | sed 's/-pantheos$//')
+          MAJOR=$(echo "$BASE_VERSION" | cut -d. -f1)
 
           # Alpha/beta builds come from master, everything else from stable branches
           # RCs use the stable branch with the stable channel
-          if [[ "$VERSION" =~ \.0\.0(alpha|beta) ]]; then
+          if [[ "$BASE_VERSION" =~ \.0\.0(alpha|beta) ]]; then
             BRANCH="master"
             CHANNEL="beta"
           else
@@ -67,6 +76,7 @@ jobs:
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "base_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
           echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
@@ -77,24 +87,16 @@ jobs:
         id: ref
         run: |
           TAG="${{ steps.parse.outputs.tag }}"
-          VERSION="${{ steps.parse.outputs.version }}"
+          VERSION="${{ steps.parse.outputs.base_version }}"
           BRANCH="${{ steps.parse.outputs.branch }}"
+          SOURCE_REF="${{ inputs.source_ref || 'stable34' }}"
 
           # If the tag exists on the server repo, use it (exact commit).
           # Otherwise use the branch HEAD (new release, tag not created yet).
-          TAG_EXISTS=$(curl -sf "https://raw.githubusercontent.com/nextcloud/server/refs/tags/${TAG}/version.php" \
+          REF="$SOURCE_REF"
+          VERSION_STRING=$(curl -sf "https://raw.githubusercontent.com/${SERVER_REPOSITORY}/refs/heads/${REF}/version.php" \
             | grep 'OC_VersionString' | cut -d"'" -f2)
-
-          if [ -n "$TAG_EXISTS" ]; then
-            REF="$TAG"
-            VERSION_STRING="$TAG_EXISTS"
-            echo "::notice::Using tag ${TAG} (exact release commit)"
-          else
-            REF="$BRANCH"
-            VERSION_STRING=$(curl -sf "https://raw.githubusercontent.com/nextcloud/server/refs/heads/${BRANCH}/version.php" \
-              | grep 'OC_VersionString' | cut -d"'" -f2)
-            echo "::notice::Tag not found, using branch ${BRANCH} HEAD"
-          fi
+          echo "::notice::Using ${SERVER_REPOSITORY}@${REF}"
 
           if [ -z "$VERSION_STRING" ]; then
             echo "::error::Could not read version.php from nextcloud/server@${REF}"
@@ -112,24 +114,19 @@ jobs:
             exit 1
           fi
 
-          # For master builds, empty ref = use repo's default branch
-          if [ "$REF" = "master" ]; then
-            REF=""
-          fi
-
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "::notice::version.php confirms ${VERSION_STRING}"
 
       - name: Detect PHP version from server
         id: php
         run: |
-          BRANCH="${{ steps.parse.outputs.branch }}"
+          SOURCE_REF="${{ inputs.source_ref || 'stable34' }}"
           # Use the minimum supported PHP version from versioncheck.php.
           # This matches the release script, which tries php8.4→down and picks
           # the first that passes occ status (i.e. the lowest available that
           # satisfies the minimum). Using the minimum ensures composer generates
           # identical autoloader output (platform_check.php, etc.).
-          MIN_PHP_ID=$(curl -sf "https://raw.githubusercontent.com/nextcloud/server/refs/heads/${BRANCH}/lib/versioncheck.php" \
+          MIN_PHP_ID=$(curl -sf "https://raw.githubusercontent.com/${SERVER_REPOSITORY}/refs/heads/${SOURCE_REF}/lib/versioncheck.php" \
             | grep -oP 'PHP_VERSION_ID < \K\d+' | head -1)
 
           if [ -n "$MIN_PHP_ID" ]; then
@@ -162,7 +159,7 @@ jobs:
 
           # Use the resolved ref from the version check step.
           # For tags: "v32.0.8". For branches: "stable34" or "" (master).
-          REF="${{ steps.ref.outputs.ref }}"
+          REF="$BRANCH"
 
           MATRIX=$(jq -c --arg ref "$REF" \
             'map(. + {branch: $ref}) | {include: .}' "$CONFIG")
@@ -177,7 +174,7 @@ jobs:
       - name: Checkout server
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          repository: nextcloud/server
+          repository: ${{ env.SERVER_REPOSITORY }}
           ref: ${{ needs.init.outputs.ref }}
 
       - name: Save commit hash
@@ -477,6 +474,20 @@ jobs:
       #       gh release upload "$TAG" "$sig" --clobber 2>/dev/null \
       #         || echo "::warning::Could not attach $(basename "$sig") to release $TAG"
       #     done
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          TAG="${{ needs.init.outputs.tag }}"
+          VERSION="${{ needs.init.outputs.version }}"
+          gh release create "$TAG" \
+            --repo "$SERVER_REPOSITORY" \
+            --target "${{ needs.init.outputs.ref }}" \
+            --title "$TAG" \
+            --notes "Pantheon build of Nextcloud ${VERSION}" \
+            "releases/nextcloud-${VERSION}.zip" \
+            "releases/nextcloud-${VERSION}.zip.sha256"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
