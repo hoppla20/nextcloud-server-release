@@ -45,7 +45,10 @@
   },
   {
     "id": "photos",
-    "repo": "nextcloud/photos"
+    "repo": "nextcloud/photos",
+    "php_extensions": [
+      "exif"
+    ]
   },
   {
     "id": "privacy",
